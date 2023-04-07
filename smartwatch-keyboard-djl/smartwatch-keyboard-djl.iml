@@ -12,5 +12,6 @@
     <orderEntry type="library" name="ai.djl.tensorflow.api" level="project" />
     <orderEntry type="library" name="ai.djl.tensorflow.engine" level="project" />
     <orderEntry type="library" name="ai.djl.tensorflow.model.zoo" level="project" />
+    <orderEntry type="library" name="core" level="project" />
   </component>
 </module>
