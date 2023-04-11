@@ -1,28 +1,19 @@
 import ai.djl.MalformedModelException;
-import ai.djl.inference.*;
-import ai.djl.modality.*;
-import ai.djl.modality.cv.*;
-import ai.djl.modality.cv.util.*;
-import ai.djl.ndarray.*;
 import ai.djl.repository.zoo.*;
 import ai.djl.translate.*;
-import ai.djl.training.util.*;
-import ai.djl.util.*;
 import processing.core.PApplet;
 import processing.core.PImage;
 
 import java.io.IOException;
-import java.net.*;
-import java.nio.file.*;
 import java.util.*;
-import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Random;
 
 public final class Main extends PApplet {
+
+    final LetterClassifier letterClassifier = new LetterClassifier();
 
     String[] phrases; //contains all of the phrases
     int totalTrialNum = 2; //the total number of phrases to be tested - set this low for testing. Might be ~10 for the real bakeoff!
@@ -39,8 +30,37 @@ public final class Main extends PApplet {
     //http://en.wikipedia.org/wiki/List_of_displays_by_pixel_density
     final float sizeOfInputArea = DPIofYourDeviceScreen*1; //aka, 1.0 inches square!
     PImage watch;
-    //Variables for my silly implementation. You can delete this:
-    char currentLetter = 'a';
+
+    // implementation variables
+    int numAllLetters = 26;
+    int numTopLetters = 5;
+    int numAllLettersRounded = numAllLetters + numTopLetters - (numAllLetters % numTopLetters);
+    List<String> letters = new ArrayList<String>(); // current letters displayed at top of screen
+    List<String> allLetters = new ArrayList<String>(); // al letters returned by letter classifier
+    int letterIndex = 0;
+
+    // drawing variables
+    final int screenWidth = 800;
+    final int screenHeight = 800;
+    final float drawAreaSize = sizeOfInputArea/5*4;
+    final float screenTL_X = screenWidth/2-sizeOfInputArea/2;
+    final float screenTL_Y = screenHeight/2-sizeOfInputArea/2;
+    final float drawAreaX = screenWidth/2 - drawAreaSize/2;
+    final float drawAreaY = screenTL_Y+sizeOfInputArea/5;
+    final float arrowButtonWidth = sizeOfInputArea/8;
+    final float letterButtonStartX = arrowButtonWidth;
+    final float letterButtonWidth = (sizeOfInputArea - (2 * arrowButtonWidth)) / numTopLetters;
+    final float letterButtonHeight = sizeOfInputArea / 5;
+    final float leftButtonX = screenTL_X;
+    final float rightButtonX = screenTL_X + arrowButtonWidth + numTopLetters * letterButtonWidth;
+    final float sideButtonWidth = (sizeOfInputArea - drawAreaSize) / 2;
+    final float sideButtonHeight = letterButtonHeight;
+    final float deleteButtonX = screenTL_X;
+    final float deleteButtonY = screenTL_Y + sizeOfInputArea - sideButtonHeight;
+    final float spaceButtonX = screenTL_X + sizeOfInputArea - sideButtonWidth;
+    final float spaceButtonY = screenTL_Y + sizeOfInputArea - sideButtonHeight;
+    final float clearButtonX = screenTL_X + sizeOfInputArea - sideButtonWidth;
+    final float clearButtonY = screenTL_Y + letterButtonHeight;
 
     public static void main(String[] args) {
         PApplet.main("Main");
@@ -48,7 +68,7 @@ public final class Main extends PApplet {
 
     // method for setting the size of the window
     public void settings(){
-        size(800, 800); //Sets the size of the app. You should modify this to your device's native size. Many phones today are 1080 wide by 1920 tall.
+        size(screenWidth, screenHeight); //Sets the size of the app. You should modify this to your device's native size. Many phones today are 1080 wide by 1920 tall.
     }
 
     public void setup() {
@@ -59,17 +79,34 @@ public final class Main extends PApplet {
 
         orientation(LANDSCAPE); //can also be PORTRAIT - sets orientation on android device
         textFont(createFont("Arial", 24)); //set the font to arial 24. Creating fonts is expensive, so make difference sizes once in setup, not draw
-        noStroke(); //my code doesn't use any strokes
-    }
+        noStroke();
 
-    //You can modify anything in here. This is just a basic implementation.
-    public void draw()
-    {
+        try {
+            letterClassifier.setup();
+        } catch (ModelNotFoundException e) {
+            throw new RuntimeException(e);
+        } catch (MalformedModelException e) {
+            throw new RuntimeException(e);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
         background(255); //clear background
         drawWatch(); //draw watch background
-        fill(100);
-        rect(width/2-sizeOfInputArea/2, height/2-sizeOfInputArea/2, sizeOfInputArea, sizeOfInputArea); //input area should be 1" by 1"
+        drawDrawArea();
 
+        for (int i = 0; i < numTopLetters; i++) {
+            letters.add("");
+        }
+
+    }
+
+    public void draw()
+    {
+        // background for text
+        fill(255);
+        rect(0,0,width,height/4);
+
+        textSize(24);
         if (finishTime!=0)
         {
             fill(128);
@@ -106,48 +143,131 @@ public final class Main extends PApplet {
             fill(255);
             text("NEXT > ", 650, 650); //draw next label
 
-            //my draw code
-            fill(255, 0, 0); //red button
-            rect(width/2-sizeOfInputArea/2, height/2-sizeOfInputArea/2+sizeOfInputArea/2, sizeOfInputArea/2, sizeOfInputArea/2); //draw left red button
-            fill(0, 255, 0); //green button
-            rect(width/2-sizeOfInputArea/2+sizeOfInputArea/2, height/2-sizeOfInputArea/2+sizeOfInputArea/2, sizeOfInputArea/2, sizeOfInputArea/2); //draw right green button
-            textAlign(CENTER);
-            fill(200);
-            text("" + currentLetter, width/2, height/2-sizeOfInputArea/4); //draw current letter
+            // draw letter buttons
+            textSize((int)(sizeOfInputArea / 9));
+            for (int i = 0; i < numTopLetters; i++) {
+                stroke(255);
+                strokeWeight(1);
+                fill(0);
+                rect(letterButtonStartX + screenTL_X + i * letterButtonWidth, screenTL_Y, letterButtonWidth, letterButtonHeight);
+                fill(255);
+                text(letters.get(i).toUpperCase(), letterButtonStartX + screenTL_X + i * letterButtonWidth + letterButtonWidth / 3, screenTL_Y + letterButtonHeight / 4 * 3);
+            }
+
+            // draw left right arrow buttons
+            fill(0);
+            rect(leftButtonX, screenTL_Y, arrowButtonWidth, letterButtonHeight);
+            fill(255);
+            text("<", leftButtonX + arrowButtonWidth / 3, screenTL_Y + letterButtonHeight / 4 * 3);
+            fill(0);
+            rect(rightButtonX, screenTL_Y, arrowButtonWidth, letterButtonHeight);
+            fill(255);
+            text(">", rightButtonX + arrowButtonWidth / 3, screenTL_Y + letterButtonHeight / 4 * 3);
+
+            // draw delete button
+            fill(255,0,0);
+            rect(deleteButtonX, deleteButtonY, sideButtonWidth, sideButtonHeight);
+
+            // draw space button
+            fill(0);
+            rect(spaceButtonX, spaceButtonY, sideButtonWidth, sideButtonHeight);
+            fill(255);
+            text("_", spaceButtonX + sideButtonWidth / 4, spaceButtonY + sideButtonHeight / 4 * 3);
+
+            // draw clear button
+            fill(0);
+            rect(clearButtonX, clearButtonY, sideButtonWidth, sideButtonHeight);
+            fill(255);
+            text("X", clearButtonX + sideButtonWidth / 4, clearButtonY + sideButtonHeight / 4 * 3);
+
+            strokeWeight(0);
+
+            // handle user drawing letters on draw area
+            if (mousePressed && didMouseClick(drawAreaX, drawAreaY, drawAreaSize, drawAreaSize)) {
+                stroke(255);
+                strokeWeight(5);
+                line(mouseX, mouseY, pmouseX, pmouseY);
+                strokeWeight(0);
+            }
+
         }
     }
 
-    //my terrible implementation you can entirely replace
+    private void drawDrawArea() {
+        fill(0);
+        rect(drawAreaX, drawAreaY, drawAreaSize, drawAreaSize);
+    }
+
     private boolean didMouseClick(float x, float y, float w, float h) //simple function to do hit testing
     {
         return (mouseX > x && mouseX<x+w && mouseY>y && mouseY<y+h); //check to see if it is in button bounds
     }
 
-    //my terrible implementation you can entirely replace
+    public void classify(){
+        String absDir = System.getProperty("user.dir");
+
+        PImage screenshot = get((int) drawAreaX + 1, (int) drawAreaY + 1, (int) drawAreaSize, (int) drawAreaSize);
+        screenshot.save(absDir + "/images/cur.jpeg");
+
+        List<String> results;
+        try {
+            results = letterClassifier.classify("images/cur.jpeg");
+            System.out.println(results);
+            System.out.println("done classifying");
+        } catch (TranslateException e) {
+            throw new RuntimeException(e);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+
+        allLetters.clear();
+        for (int i = 0; i < numAllLetters; i++) {
+            allLetters.add(results.get(i));
+        }
+        for (int i = numAllLetters; i < numAllLettersRounded; i++) {
+            allLetters.add("");
+        }
+        letterIndex = 0;
+        letters = allLetters.subList(letterIndex, letterIndex + numTopLetters);
+    }
+
+    public void mouseReleased()
+    {
+        if (didMouseClick(drawAreaX, drawAreaY, drawAreaSize, drawAreaSize)) {
+            classify();
+        }
+    }
+
     public void mousePressed()
     {
-        if (didMouseClick(width/2-sizeOfInputArea/2, height/2-sizeOfInputArea/2+sizeOfInputArea/2, sizeOfInputArea/2, sizeOfInputArea/2)) //check if click in left button
-        {
-            currentLetter --;
-            if (currentLetter<'_') //wrap around to z
-                currentLetter = 'z';
+        // handle letter button click
+        for (int i = 0; i < numTopLetters; i++) {
+            if (didMouseClick(letterButtonStartX + screenTL_X + i * letterButtonWidth, screenTL_Y, letterButtonWidth, letterButtonHeight)) {
+                currentTyped+=letters.get(i);
+                drawDrawArea(); // clear
+            }
         }
-
-        if (didMouseClick(width/2-sizeOfInputArea/2+sizeOfInputArea/2, height/2-sizeOfInputArea/2+sizeOfInputArea/2, sizeOfInputArea/2, sizeOfInputArea/2)) //check if click in right button
-        {
-            currentLetter ++;
-            if (currentLetter>'z') //wrap back to space (aka underscore)
-                currentLetter = '_';
+        // handle left arrow click
+        if (didMouseClick(leftButtonX, screenTL_Y, arrowButtonWidth, letterButtonHeight)) {
+            letterIndex = letterIndex == 0 ? numAllLettersRounded - numTopLetters : letterIndex - numTopLetters;
+            letters = allLetters.subList(letterIndex, letterIndex + numTopLetters);
         }
-
-        if (didMouseClick(width/2-sizeOfInputArea/2, height/2-sizeOfInputArea/2, sizeOfInputArea, sizeOfInputArea/2)) //check if click occured in letter area
-        {
-            if (currentLetter=='_') //if underscore, consider that a space bar
-                currentTyped+=" ";
-            else if (currentLetter=='`' & currentTyped.length()>0) //if `, treat that as a delete command
-                currentTyped = currentTyped.substring(0, currentTyped.length()-1);
-            else if (currentLetter!='`') //if not any of the above cases, add the current letter to the typed string
-                currentTyped+=currentLetter;
+        // handle right arrow click
+        if (didMouseClick(rightButtonX, screenTL_Y, arrowButtonWidth, letterButtonHeight)) {
+            letterIndex = (letterIndex + numTopLetters) % numAllLettersRounded;
+            letters = allLetters.subList(letterIndex, letterIndex + numTopLetters);
+        }
+        // handle delete click
+        if (didMouseClick(deleteButtonX, deleteButtonY, sideButtonWidth, sideButtonHeight)) {
+            currentTyped = currentTyped.substring(0, currentTyped.length()-1);
+        }
+        // handle space click
+        if (didMouseClick(spaceButtonX, spaceButtonY, sideButtonWidth, sideButtonHeight)) {
+            currentTyped += " ";
+        }
+        // handle clear click
+        if (didMouseClick(clearButtonX, clearButtonY, sideButtonWidth, sideButtonHeight)) {
+            drawDrawArea();
         }
 
         //You are allowed to have a next button outside the 1" area
@@ -248,60 +368,4 @@ public final class Main extends PApplet {
         return distance[phrase1.length()][phrase2.length()];
     }
 
-//    public static void main(String[] args) throws IOException, ModelNotFoundException, MalformedModelException, TranslateException {
-//        String imagePath = "letter.jpeg";
-//        Image image = ImageFactory.getInstance().fromFile(Paths.get(imagePath));
-//
-//        Path modelPath = Paths.get("converted_savedmodel/model.savedmodel");
-//        String modelName = "saved_model";
-//        image.getWrappedImage();
-//
-//        Criteria<Image, Classifications> criteria =
-//                Criteria.builder()
-//                        .setTypes(Image.class, Classifications.class)
-//                        .optModelPath(modelPath)
-//                        .optModelName(modelName)
-//                        .optTranslator(new MyTranslator())
-//                        .optProgress(new ProgressBar())
-//                        .build();
-//        ZooModel model = criteria.loadModel();
-//
-//        Predictor<Image, Classifications> predictor = model.newPredictor();
-//
-//        System.out.println("starting predict");
-//        Classifications classifications = predictor.predict(image);
-//
-//        System.out.println(classifications);
-//    }
-
-}
-
-class MyTranslator implements Translator<Image, Classifications> {
-
-    private static final List<String> CLASSES = Arrays.asList("a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z");
-
-    @Override
-    public NDList processInput(TranslatorContext ctx, Image input) {
-        // Convert Image to NDArray
-        Image image = input.resize(224, 224, false);
-//        NDArray array = image.toNDArray(ctx.getNDManager(), Image.Flag.GRAYSCALE);
-        NDArray array = image.toNDArray(ctx.getNDManager());
-        System.out.println(array.getShape());
-        return new NDList(NDImageUtils.toTensor(array));
-    }
-
-    @Override
-    public Classifications processOutput(TranslatorContext ctx, NDList list) {
-        // Create a Classifications with the output probabilities
-        NDArray probabilities = list.singletonOrThrow().softmax(0);
-        List<String> classNames = IntStream.range(0, 26).mapToObj(String::valueOf).collect(Collectors.toList());
-        return new Classifications(CLASSES, probabilities);
-    }
-
-    @Override
-    public Batchifier getBatchifier() {
-        // The Batchifier describes how to combine a batch together
-        // Stacking, the most common batchifier, takes N [X1, X2, ...] arrays to a single [N, X1, X2, ...] array
-        return Batchifier.STACK;
-    }
 }
